@@ -1,0 +1,62 @@
+[
+  {
+    "entry_id": 1,
+    "barcode": "8901491100250",
+    "name": "American Style Cream & Onion",
+    "category": "Potato crisps",
+    "brand": "Lay's",
+    "scanned_at": "2026-10-26 17:18:45",
+    "expiry_date": "2026-11-05",
+    "days_until_expiry": 10,
+    "status": "Fresh",
+    "source": "openfoodfacts"
+  },
+  {
+    "entry_id": 2,
+    "barcode": "0080119000092",
+    "name": "Packaged Item (000092)",
+    "category": "Packaged Goods",
+    "brand": "Standard Packaged",
+    "scanned_at": "2026-10-26 17:19:27",
+    "expiry_date": "2026-11-02",
+    "days_until_expiry": 7,
+    "status": "Fresh",
+    "source": "fallback"
+  },
+  {
+    "entry_id": 3,
+    "barcode": "0080119000092",
+    "name": "Packaged Item (000092)",
+    "category": "Packaged Goods",
+    "brand": "Standard Packaged",
+    "scanned_at": "2026-10-26 17:19:39",
+    "expiry_date": "2026-11-02",
+    "days_until_expiry": 7,
+    "status": "Fresh",
+    "source": "fallback"
+  },
+  {
+    "entry_id": 4,
+    "barcode": "8901499030283",
+    "name": "Unknown Product",
+    "category": "Protein",
+    "brand": "Unknown Brand",
+    "scanned_at": "2026-10-26 17:19:46",
+    "expiry_date": "2026-11-05",
+    "days_until_expiry": 10,
+    "status": "Fresh",
+    "source": "openfoodfacts"
+  },
+  {
+    "entry_id": 5,
+    "barcode": "8901491100250",
+    "name": "American Style Cream & Onion",
+    "category": "Potato crisps",
+    "brand": "Lay's",
+    "scanned_at": "2026-10-26 17:19:58",
+    "expiry_date": "2026-11-05",
+    "days_until_expiry": 10,
+    "status": "Fresh",
+    "source": "openfoodfacts"
+  }
+]
