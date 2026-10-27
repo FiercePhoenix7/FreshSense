@@ -10,7 +10,7 @@ class InventoryManager:
     Features:
     - Debounce/cooldown tracking to avoid duplicate scans while an item remains in view.
     - Persistent JSON storage in data/inventory.json.
-    - Formatted console printing for newly identified items.
+    - Formatted console printing for newly identified and removed items.
     """
     
     DEFAULT_INVENTORY_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "inventory.json")
@@ -75,6 +75,36 @@ class InventoryManager:
         self._save_inventory()
         return True, entry
 
+    def reset_cooldowns(self):
+        """Clears per-barcode cooldowns (e.g. when switching between Insert/Remove modes)."""
+        self.last_scans.clear()
+
+    def remove_item(self, product_details):
+        """
+        Removes one unit of a scanned product from inventory if not within cooldown.
+        The oldest logged entry with a matching barcode is removed first (FIFO).
+        Returns:
+          (True, removed_entry)                    -> item removed
+          (False, "Item not found in inventory")   -> barcode not in inventory
+          (False, None)                            -> skipped due to cooldown
+        """
+        barcode = product_details.get("barcode", "UNKNOWN")
+        if not self.should_process(barcode):
+            return False, None
+
+        # Inventory is append-only, so the first match is the oldest logged entry
+        for index, item in enumerate(self.inventory):
+            if item.get("barcode") == barcode:
+                removed_item = self.inventory.pop(index)
+                self._save_inventory()
+                return True, removed_item
+
+        return False, "Item not found in inventory"
+
+    def count_item(self, barcode):
+        """Returns how many units of a barcode are currently in inventory."""
+        return sum(1 for item in self.inventory if item.get("barcode") == barcode)
+
     def print_item(self, product_details, is_new=True):
         """
         Prints a clean, formatted card of the identified product and its expiry.
@@ -94,6 +124,29 @@ class InventoryManager:
         print(f"  Expiry Date  : {product_details.get('expiry_date')} ({days_str})")
         print(f"  Freshness    : {product_details.get('status')}")
         print(f"  Lookup Source: {product_details.get('source').upper()}")
+        print(border + "\n", flush=True)
+
+    def print_removal(self, product_details, success=True):
+        """
+        Prints a clean, formatted card for an item removed (or not found) during Remove mode.
+        """
+        header_tag = "ITEM REMOVED FROM INVENTORY" if success else "REMOVAL FAILED - ITEM NOT IN INVENTORY"
+        barcode = product_details.get('barcode')
+        raw = product_details.get('raw_barcode')
+        barcode_str = f"{barcode} ({raw})" if raw and raw != barcode else f"{barcode}"
+
+        border = "=" * 56
+        print("\n" + border)
+        print(f"  FRESHSENSE - {header_tag}")
+        print(border)
+        print(f"  Product Name : {product_details.get('name')}")
+        print(f"  Barcode      : {barcode_str}")
+        print(f"  Brand        : {product_details.get('brand')}")
+        print(f"  Category     : {product_details.get('category')}")
+        if success:
+            print(f"  Expiry Date  : {product_details.get('expiry_date')}")
+            print(f"  Logged At    : {product_details.get('scanned_at', 'N/A')}")
+        print(f"  Units Left   : {self.count_item(barcode)}")
         print(border + "\n", flush=True)
 
     def get_all_items(self):
