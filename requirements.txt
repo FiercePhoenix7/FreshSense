@@ -1,0 +1,14 @@
+# FreshSense Dependencies
+# ── Core UI ──
+streamlit>=1.38.0
+pandas>=2.0.0
+
+# ── Backend (already used by scanner) ──
+opencv-python>=4.8.0
+Pillow>=10.0.0
+pyzbar>=0.1.9
+
+# ── Optional: AI Recipe Suggestions ──
+# Install Ollama separately: https://ollama.ai
+# Then pull the model: ollama pull llama3.1:8b
+
