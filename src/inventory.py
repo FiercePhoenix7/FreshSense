@@ -15,10 +15,10 @@ class InventoryManager:
     
     DEFAULT_INVENTORY_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "inventory.json")
 
-    def __init__(self, inventory_path=None, cooldown_seconds=5.0):
+    def __init__(self, inventory_path=None, cooldown_seconds=3.0):
         self.inventory_path = inventory_path or self.DEFAULT_INVENTORY_PATH
         self.cooldown_seconds = cooldown_seconds
-        self.last_scans = {}  # barcode -> last scan timestamp
+        self.last_scans = {}  # barcode -> timestamp of most recent sighting
         self.inventory = self._load_inventory()
 
     def _load_inventory(self):
@@ -41,13 +41,35 @@ class InventoryManager:
             print(f"[InventoryManager] Error saving inventory: {e}")
 
     def should_process(self, barcode):
-        """Checks if enough time has passed since this barcode was last scanned."""
+        """
+        Sliding-window presence lock: refreshes `last_scans[barcode]` on every
+        sighting so holding an item in front of the camera never logs it twice.
+        The barcode must be out of view for `cooldown_seconds` before it can
+        be processed again.
+        """
         now = time.time()
         last_time = self.last_scans.get(barcode, 0)
-        if (now - last_time) >= self.cooldown_seconds:
-            self.last_scans[barcode] = now
-            return True
-        return False
+        self.last_scans[barcode] = now
+        return (now - last_time) >= self.cooldown_seconds
+
+    def update_item_details(self, product_details):
+        """Updates existing inventory entries when async product lookup resolves details."""
+        barcode = product_details.get("barcode")
+        if not barcode:
+            return
+        updated = False
+        for item in self.inventory:
+            if item.get("barcode") == barcode and item.get("source") == "fallback":
+                item["name"] = product_details.get("name", item["name"])
+                item["category"] = product_details.get("category", item["category"])
+                item["brand"] = product_details.get("brand", item["brand"])
+                item["expiry_date"] = product_details.get("expiry_date", item["expiry_date"])
+                item["days_until_expiry"] = product_details.get("days_until_expiry", item["days_until_expiry"])
+                item["status"] = product_details.get("status", item["status"])
+                item["source"] = product_details.get("source", item["source"])
+                updated = True
+        if updated:
+            self._save_inventory()
 
     def add_item(self, product_details):
         """

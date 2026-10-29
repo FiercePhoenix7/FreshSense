@@ -149,9 +149,10 @@ class ProductLookupService:
             pass  # Fallback gracefully if offline or request times out
         return None
 
-    def lookup(self, raw_barcode_data):
+    def lookup(self, raw_barcode_data, allow_network=True):
         """
         Main entry point: Looks up a barcode and returns full item details & expiry.
+        Set allow_network=False on real-time UI threads to avoid blocking on HTTP timeouts.
         
         Returns dict:
         {
@@ -191,8 +192,8 @@ class ProductLookupService:
                     source = "catalog"
                     break
 
-        # Step 3: Try Open Food Facts if not found locally
-        if not product_info and lookup_key.isdigit():
+        # Step 3: Try Open Food Facts if not found locally (only when network calls are allowed)
+        if not product_info and allow_network and lookup_key.isdigit():
             off_info = self._fetch_open_food_facts(lookup_key)
             if off_info:
                 product_info = off_info

@@ -1,6 +1,7 @@
 import os
 import sys
 import io
+import time
 import wave
 import shutil
 import threading
@@ -112,11 +113,16 @@ class FreshSenseScanner:
         self.cap = cv2.VideoCapture(0)
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         
         # Performance trackers
         self.frame_count = 0
         self.scan_interval = 3  # Decode every 3rd frame to keep FPS buttery smooth
         self.last_barcode_data = None
+        self._decode_busy = False
+        self._pending_network_lookups = set()
+        self._active_overlays = []       # [(bx, by, bw, bh, text)]
+        self._overlay_until = 0.0        # keep bounding box visible smoothly between scan ticks
         
         # Audio feedback pre-generation
         self._aplay_available = shutil.which("aplay") is not None
@@ -192,13 +198,41 @@ class FreshSenseScanner:
         self.current_mode = mode
         self.mode_label.config(text=f"MODE: [ {mode} ]", bg=self.MODE_COLORS[mode])
         
-    def _lookup_product(self, data):
-        """Cached product lookup so repeated scans don't re-hit the catalog or network."""
+    def _lookup_product(self, data, b_type=None):
+        """
+        Instant non-blocking product lookup for the camera loop.
+        If a barcode is not in the local catalog, returns the fast fallback immediately
+        so the camera never pauses, and enriches from Open Food Facts in the background.
+        """
         product = self.lookup_cache.get(data)
         if product is None:
-            product = self.product_lookup.lookup(data)
+            product = self.product_lookup.lookup(data, allow_network=False)
             self.lookup_cache[data] = product
+
+            if product.get("source") == "fallback" and data not in self._pending_network_lookups:
+                self._pending_network_lookups.add(data)
+                threading.Thread(
+                    target=self._async_enrich_product,
+                    args=(data, b_type),
+                    daemon=True,
+                ).start()
         return product
+
+    def _async_enrich_product(self, data, b_type):
+        """Fetches Open Food Facts metadata off the UI thread so video playback never freezes."""
+        try:
+            enriched = self.product_lookup.lookup(data, allow_network=True)
+            if enriched.get("source") == "openfoodfacts":
+                self.lookup_cache[data] = enriched
+                self.root.after(0, self._apply_enriched_product, data, b_type, enriched)
+        except Exception:
+            pass
+
+    def _apply_enriched_product(self, data, b_type, enriched):
+        """Applies background-resolved product info to inventory and UI card on main thread."""
+        self.inventory_manager.update_item_details(enriched)
+        if self.last_barcode_data == data and self.current_mode == "INSERT":
+            self._update_ui_display(enriched, b_type or "BARCODE", is_new=True)
         
     def _update_removal_display(self, product, barcode_type, removed=True):
         """Updates the Tkinter UI card after a Remove-mode scan."""
@@ -259,65 +293,85 @@ class FreshSenseScanner:
             fg="#555555"
         )
 
+    def _decode_worker(self, gray_frame):
+        """Runs pyzbar.decode in a background thread so camera rendering never stutters."""
+        try:
+            barcodes = decode(gray_frame)
+            results = [
+                (b.data.decode("utf-8"), b.type, tuple(b.rect))
+                for b in barcodes
+            ]
+            self.root.after(0, self._process_decoded_barcodes, results)
+        except Exception:
+            self._decode_busy = False
+
+    def _process_decoded_barcodes(self, results):
+        """Processes decoded barcodes on the Tkinter thread without blocking video capture."""
+        self._decode_busy = False
+        if not results:
+            return
+
+        new_overlays = []
+        for data, b_type, (bx, by, bw, bh) in results:
+            product = self._lookup_product(data, b_type)
+            overlay_text = f"{product['name'][:22]} | Exp: {product['expiry_date']}"
+            new_overlays.append((bx, by, bw, bh, overlay_text))
+
+            if self.current_mode == "INSERT":
+                # Add item to inventory (sliding lock prevents double-logging while held in view)
+                is_new, _ = self.inventory_manager.add_item(product)
+                if is_new:
+                    self.play_beep("insert")
+                    self.inventory_manager.print_item(product, is_new=True)
+                    self._update_ui_display(product, b_type, is_new=True)
+                elif data != self.last_barcode_data:
+                    self._update_ui_display(product, b_type, is_new=False)
+            else:
+                # Remove one unit from inventory (None result = still held in view / cooldown)
+                removed, result = self.inventory_manager.remove_item(product)
+                if removed:
+                    self.play_beep("delete")
+                    self.inventory_manager.print_removal(result, success=True)
+                    self._update_removal_display(result, b_type, removed=True)
+                elif result is not None:
+                    self.inventory_manager.print_removal(product, success=False)
+                    self._update_removal_display(product, b_type, removed=False)
+
+            self.last_barcode_data = data
+
+        self._active_overlays = new_overlays
+        self._overlay_until = time.time() + 0.25
+
     def update_frame(self):
         ret, frame = self.cap.read()
         
         if ret:
             self.frame_count += 1
             
-            # 1. Run barcode detection on the full camera FOV, only on throttled frames
-            if self.frame_count % self.scan_interval == 0:
+            # 1. Dispatch barcode detection to background worker on throttled frames
+            if self.frame_count % self.scan_interval == 0 and not self._decode_busy:
+                self._decode_busy = True
                 gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-                barcodes = decode(gray_frame)
-                
+                threading.Thread(
+                    target=self._decode_worker,
+                    args=(gray_frame,),
+                    daemon=True,
+                ).start()
+            
+            # Draw active barcode bounding boxes smoothly across frames
+            if self._active_overlays and time.time() < self._overlay_until:
                 box_color = (0, 200, 0) if self.current_mode == "INSERT" else (0, 0, 220)  # BGR
-                
-                for barcode in barcodes:
-                    data = barcode.data.decode('utf-8')
-                    b_type = barcode.type
-                    
-                    # Barcode coords are already in full-frame space
-                    bx, by, bw, bh = barcode.rect
-                    
-                    # Look up product info and calculate expiry (cached)
-                    product = self._lookup_product(data)
-                    
-                    # Draw mode-coloured bounding box around detected code
+                for bx, by, bw, bh, overlay_text in self._active_overlays:
                     cv2.rectangle(frame, (bx, by), (bx + bw, by + bh), box_color, 3)
-                    
-                    # Overlay product name & expiry above barcode box
-                    overlay_text = f"{product['name'][:22]} | Exp: {product['expiry_date']}"
                     cv2.putText(
-                        frame, 
-                        overlay_text, 
-                        (bx, max(by - 12, 30)), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 
-                        0.7, 
-                        box_color, 
-                        2
+                        frame,
+                        overlay_text,
+                        (bx, max(by - 12, 30)),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.7,
+                        box_color,
+                        2,
                     )
-                    
-                    if self.current_mode == "INSERT":
-                        # Add item to inventory and print details to console
-                        is_new, _ = self.inventory_manager.add_item(product)
-                        if is_new:
-                            self.play_beep("insert")
-                            self.inventory_manager.print_item(product, is_new=True)
-                            self._update_ui_display(product, b_type, is_new=True)
-                        elif data != self.last_barcode_data:
-                            self._update_ui_display(product, b_type, is_new=False)
-                    else:
-                        # Remove one unit from inventory (None result = still in cooldown)
-                        removed, result = self.inventory_manager.remove_item(product)
-                        if removed:
-                            self.play_beep("delete")
-                            self.inventory_manager.print_removal(result, success=True)
-                            self._update_removal_display(result, b_type, removed=True)
-                        elif result is not None:
-                            self.inventory_manager.print_removal(product, success=False)
-                            self._update_removal_display(product, b_type, removed=False)
-                            
-                    self.last_barcode_data = data
             
             # 2. Mode indicator on the video feed
             mode_bgr = (0, 160, 0) if self.current_mode == "INSERT" else (0, 0, 200)
