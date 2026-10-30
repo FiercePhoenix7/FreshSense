@@ -1,9 +1,11 @@
 """
 Data Manager — Central data access layer for FreshSense.
 Handles loading, saving, querying, and mutating inventory + products data.
+Actively tracks file modification times (mtime & size) for real-time external synchronization.
 """
 import json
 import os
+import time
 from datetime import datetime, date, timedelta
 from typing import List, Dict, Optional, Tuple
 
@@ -15,30 +17,74 @@ class DataManager:
         self.project_root = project_root
         self.inventory_path = os.path.join(project_root, "data", "inventory.json")
         self.products_path = os.path.join(project_root, "data", "products.json")
+        self.last_inventory_mtime: float = 0.0
+        self.last_inventory_size: int = 0
+        self.last_products_mtime: float = 0.0
         self.inventory: List[Dict] = []
         self.products: Dict = {}
-        self.reload()
+        self.reload(force=True)
 
-    # ── Loading ───────────────────────────────────────────────────────────
+    # ── Loading & External Sync Tracking ─────────────────────────────────
 
-    def reload(self):
-        """Re-read both JSON files from disk."""
-        self.inventory = self._load_json_list(self.inventory_path)
-        self.products = self._load_json_dict(self.products_path)
-        # Recalculate dynamic fields
-        self._recalculate_statuses()
+    def reload(self, force: bool = False) -> bool:
+        """
+        Re-reads JSON files from disk if modified or if force=True.
+        Returns True if new data was detected and loaded.
+        """
+        inv_mtime = os.path.getmtime(self.inventory_path) if os.path.exists(self.inventory_path) else 0.0
+        inv_size = os.path.getsize(self.inventory_path) if os.path.exists(self.inventory_path) else 0
+        prod_mtime = os.path.getmtime(self.products_path) if os.path.exists(self.products_path) else 0.0
 
-    def _load_json_list(self, path: str) -> list:
+        changed = False
+
+        if force or inv_mtime != self.last_inventory_mtime or inv_size != self.last_inventory_size:
+            new_inv = self._load_json_list(self.inventory_path)
+            if new_inv is not None:
+                self.inventory = new_inv
+                self.last_inventory_mtime = inv_mtime
+                self.last_inventory_size = inv_size
+                self._recalculate_statuses()
+                changed = True
+
+        if force or prod_mtime != self.last_products_mtime:
+            new_prod = self._load_json_dict(self.products_path)
+            if new_prod is not None:
+                self.products = new_prod
+                self.last_products_mtime = prod_mtime
+                changed = True
+
+        return changed
+
+    def has_inventory_changed(self) -> bool:
+        """
+        Checks if inventory.json on disk has been modified externally since last reload.
+        Checks both mtime and file size to ensure zero missed updates.
+        """
+        if not os.path.exists(self.inventory_path):
+            return False
+        try:
+            current_mtime = os.path.getmtime(self.inventory_path)
+            current_size = os.path.getsize(self.inventory_path)
+            return (current_mtime != self.last_inventory_mtime or current_size != self.last_inventory_size)
+        except OSError:
+            return False
+
+    def _load_json_list(self, path: str) -> Optional[list]:
         if os.path.exists(path):
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    return data if isinstance(data, list) else []
-            except Exception:
-                pass
+            # Retry once if another external process is currently writing
+            for attempt in range(2):
+                try:
+                    with open(path, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                        return data if isinstance(data, list) else []
+                except (json.JSONDecodeError, OSError):
+                    if attempt == 0:
+                        time.sleep(0.05)
+            # If still locked/writing, preserve existing memory rather than clearing
+            return self.inventory if self.inventory else []
         return []
 
-    def _load_json_dict(self, path: str) -> dict:
+    def _load_json_dict(self, path: str) -> Optional[dict]:
         if os.path.exists(path):
             try:
                 with open(path, "r", encoding="utf-8") as f:
@@ -54,11 +100,16 @@ class DataManager:
         os.makedirs(os.path.dirname(self.inventory_path), exist_ok=True)
         with open(self.inventory_path, "w", encoding="utf-8") as f:
             json.dump(self.inventory, f, indent=2)
+        if os.path.exists(self.inventory_path):
+            self.last_inventory_mtime = os.path.getmtime(self.inventory_path)
+            self.last_inventory_size = os.path.getsize(self.inventory_path)
 
     def _save_products(self):
         os.makedirs(os.path.dirname(self.products_path), exist_ok=True)
         with open(self.products_path, "w", encoding="utf-8") as f:
             json.dump(self.products, f, indent=2)
+        if os.path.exists(self.products_path):
+            self.last_products_mtime = os.path.getmtime(self.products_path)
 
     # ── Status Recalculation ──────────────────────────────────────────────
 
@@ -98,7 +149,6 @@ class DataManager:
             if bc not in seen:
                 seen[bc] = item
             else:
-                # Keep the one with the later scanned_at
                 existing_time = seen[bc].get("scanned_at", "")
                 new_time = item.get("scanned_at", "")
                 if new_time > existing_time:
@@ -266,7 +316,6 @@ class DataManager:
         fresh = len(self.get_fresh_items())
         categories = len(self.get_categories())
 
-        # Earliest expiry
         earliest = None
         for item in self.inventory:
             exp = item.get("expiry_date")
@@ -283,4 +332,3 @@ class DataManager:
             "categories": categories,
             "earliest_expiry": earliest,
         }
-

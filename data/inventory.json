@@ -35,12 +35,35 @@
     "status": "Expiring Soon",
     "source": "fallback"
   },
-
   {
     "entry_id": 3,
     "barcode": "0080119000092",
     "name": "Chicken",
     "category": "Meat",
+    "brand": "",
+    "scanned_at": "2026-10-26 17:19:39",
+    "expiry_date": "2026-11-02",
+    "days_until_expiry": 1,
+    "status": "Expiring Soon",
+    "source": "fallback"
+  },
+  {
+    "entry_id": 3,
+    "barcode": "0080119000092",
+    "name": "Banana",
+    "category": "Fruit",
+    "brand": "",
+    "scanned_at": "2026-10-26 17:19:39",
+    "expiry_date": "2026-11-02",
+    "days_until_expiry": 1,
+    "status": "Expiring Soon",
+    "source": "fallback"
+  },
+  {
+    "entry_id": 3,
+    "barcode": "0080119000092",
+    "name": "Carrot",
+    "category": "Vegetables",
     "brand": "",
     "scanned_at": "2026-10-26 17:19:39",
     "expiry_date": "2026-11-02",

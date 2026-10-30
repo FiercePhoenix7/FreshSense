@@ -52,9 +52,23 @@ if "current_page" not in st.session_state:
 if "notifications" not in st.session_state:
     st.session_state.notifications = []
 
-# Refresh data on every rerun
+# Fetch central DataManager & reload if modified
 dm = st.session_state.data_manager
 dm.reload()
+
+# ── Real-Time File Sync Fragment (Watches inventory.json every 1s) ────────
+@st.fragment(run_every="1s")
+def check_external_sync(data_mgr: DataManager):
+    """
+    Background fragment that polls file stats every second.
+    If an external script (e.g. camera scanner) writes to inventory.json,
+    it triggers an immediate rerun so the dashboard always shows the latest version.
+    """
+    if data_mgr.has_inventory_changed():
+        st.toast("📥 Inventory updated from external scan!", icon="🔄")
+        st.rerun()
+
+check_external_sync(dm)
 
 # ── Sidebar Navigation ───────────────────────────────────────────────────
 selected_page = render_sidebar(dm)
