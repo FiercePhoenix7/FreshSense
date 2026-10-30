@@ -1,18 +1,15 @@
 """
-AI Recipe Suggestions — Uses local Llama 3.1 8B via Ollama to suggest recipes
-based on items that are about to expire.
-
-Falls back to built-in suggestions when the local AI model is not available.
+AI Generated Recipes — Streams 3 custom recipes prioritizing items about to expire
+in the fridge inventory using local AI.
 """
 import streamlit as st
-import json
-import subprocess
+import ollama
 from datetime import date
 from utils.data_manager import DataManager
 from utils.helpers import empty_state, render_html
 
 
-# ── Built-in Recipe Suggestions (fallback when Ollama is unavailable) ─────
+# ── Curated Recipe Suggestions (Fallback if AI model is unreachable) ─────────
 FALLBACK_RECIPES = {
     "Dairy": [
         {
@@ -71,11 +68,11 @@ FALLBACK_RECIPES = {
     ],
     "Snacks": [
         {
-            "name": "Masala Chips Chaat",
+            "name": "Masala Crisps Chaat",
             "time": "10 min",
             "difficulty": "Easy",
-            "ingredients": ["Potato chips", "Onion", "Tomato", "Lemon", "Chaat masala"],
-            "instructions": "1. Crush chips lightly. 2. Mix with chopped onion and tomato. 3. Add lemon juice and chaat masala. 4. Toss and serve immediately.",
+            "ingredients": ["Potato crisps", "Onion", "Tomato", "Lemon", "Chaat masala"],
+            "instructions": "1. Crush crisps lightly. 2. Mix with chopped onion and tomato. 3. Add lemon juice and chaat masala. 4. Toss and serve immediately.",
         },
     ],
     "Meat": [
@@ -99,73 +96,100 @@ FALLBACK_RECIPES = {
 }
 
 
-def _check_ollama_available() -> bool:
-    """Check if Ollama is running and has a model available."""
-    try:
-        result = subprocess.run(
-            ["ollama", "list"],
-            capture_output=True, text=True, timeout=5,
-        )
-        return result.returncode == 0
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return False
+def _build_ai_recipe_prompt(items: list) -> str:
+    """
+    Builds the AI prompt providing inventory items along with their expiry dates
+    and requesting 3 recipes prioritizing the items that are about to expire.
+    """
+    inventory_lines = []
+    about_to_expire = []
+
+    sorted_items = sorted(
+        items,
+        key=lambda x: x.get("days_until_expiry") if x.get("days_until_expiry") is not None else 9999
+    )
+
+    for item in sorted_items:
+        name = item.get("name", "Unknown Item")
+        cat = item.get("category", "General")
+        exp = item.get("expiry_date", "No date specified")
+        days_left = item.get("days_until_expiry")
+
+        if days_left is not None:
+            if days_left < 0:
+                desc = f"EXPIRED {abs(days_left)} day(s) ago (Expiry: {exp})"
+                about_to_expire.append(f"{name} ({desc})")
+            elif days_left == 0:
+                desc = f"Expires TODAY (Expiry: {exp}) - URGENT"
+                about_to_expire.append(f"{name} ({desc})")
+            elif days_left <= 3:
+                desc = f"Expires in {days_left} day(s) (Expiry: {exp}) - HIGH PRIORITY"
+                about_to_expire.append(f"{name} ({desc})")
+            else:
+                desc = f"Expires in {days_left} day(s) (Expiry: {exp})"
+        else:
+            desc = f"Expiry date: {exp}"
+
+        inventory_lines.append(f"- {name} [{cat}]: {desc}")
+
+    inv_text = "\n".join(inventory_lines)
+    expiring_text = (
+        "\n".join([f"• {x}" for x in about_to_expire])
+        if about_to_expire
+        else "All items are currently fresh. Prioritize items with the nearest expiry dates."
+    )
+
+    return f"""You are a professional chef and smart food waste reduction AI assistant.
+
+Here is the current inventory in the fridge with their expiry dates:
+{inv_text}
+
+Items that are about to expire (highest priority to use):
+{expiring_text}
+
+TASK:
+Generate exactly 3 delicious, realistic, and practical recipes that prioritize using the items which are about to expire to avoid food waste.
+Assume basic pantry essentials (cooking oil, salt, black pepper, water, basic spices) are available.
+
+For each recipe, use this clean markdown format:
+### 1. [Recipe Name] (and 2, 3)
+- **Cooking Time:** [e.g. 20 mins]
+- **Difficulty:** Easy / Medium / Hard
+- **Expiring Ingredients Used:** [List items utilized from fridge]
+- **Pantry Staples Needed:** [List any basic staples]
+- **Instructions:**
+  1. [Step 1]
+  2. [Step 2]
+  3. [Step 3]
+  4. [Step 4]
+
+Make the recipes appetizing, practical, and focused on utilizing the expiring items."""
 
 
-def _query_llama(prompt: str, model: str = "llama3.1:8b") -> str:
-    """Query a local Ollama model and return the response text."""
-    try:
-        payload = json.dumps({
-            "model": model,
-            "prompt": prompt,
-            "stream": False,
-            "options": {
-                "temperature": 0.7,
-                "top_p": 0.9,
-                "num_predict": 800,
-            }
-        })
-
-        result = subprocess.run(
-            ["curl", "-s", "http://localhost:11434/api/generate",
-             "-d", payload],
-            capture_output=True, text=True, timeout=60,
-        )
-
-        if result.returncode == 0:
-            response = json.loads(result.stdout)
-            return response.get("response", "")
-    except Exception:
-        pass
-    return ""
-
-
-def _build_prompt(items: list) -> str:
-    """Build a recipe suggestion prompt from expiring items."""
-    item_lines = []
-    for item in items:
-        name = item.get("name", "Unknown")
-        category = item.get("category", "General")
-        days = item.get("days_until_expiry", "?")
-        item_lines.append(f"- {name} ({category}) — expires in {days} day(s)")
-
-    items_text = "\n".join(item_lines)
-
-    return f"""You are FreshSense AI, a smart fridge assistant. The user has the following food items that are about to expire or have already expired:
-
-{items_text}
-
-Suggest 2-3 creative, practical recipes that prioritize using these expiring items to minimize food waste. For each recipe provide:
-1. Recipe name
-2. Estimated cooking time
-3. Difficulty (Easy/Medium/Hard)
-4. Full ingredient list (include the expiring items + common pantry staples)
-5. Brief step-by-step instructions
-
-Focus on Indian and international cuisines. Be creative but practical. Format your response clearly with headers for each recipe."""
+def _stream_ai_recipes(items: list, model: str = "llama3.1"):
+    """
+    Generator that streams recipe chunks directly from the local AI model.
+    Yields string tokens in real time.
+    """
+    prompt = _build_ai_recipe_prompt(items)
+    stream = ollama.chat(
+        model=model,
+        messages=[{"role": "user", "content": prompt}],
+        stream=True,
+        options={
+            "temperature": 0.7,
+            "top_p": 0.9,
+        },
+    )
+    for chunk in stream:
+        if hasattr(chunk, "message") and hasattr(chunk.message, "content"):
+            yield chunk.message.content
+        elif isinstance(chunk, dict) and "message" in chunk:
+            yield chunk["message"]["content"]
 
 
 def _get_fallback_recipes(items: list) -> list:
-    """Get relevant recipes from fallback library based on item categories."""
+    """Curated fallback recipes matching the categories present in fridge."""
     categories = set()
     for item in items:
         cat = item.get("category", "General")
@@ -187,152 +211,141 @@ def _get_fallback_recipes(items: list) -> list:
         if cat in FALLBACK_RECIPES:
             recipes.extend(FALLBACK_RECIPES[cat])
 
-    if len(recipes) < 2 and "General" in FALLBACK_RECIPES:
+    if len(recipes) < 3 and "General" in FALLBACK_RECIPES:
         recipes.extend(FALLBACK_RECIPES["General"])
 
-    return recipes
+    return recipes[:3]
 
 
 def render_recipes(dm: DataManager):
-    """AI-powered recipe suggestions page."""
+    """AI Generated Recipes page with live streaming generation."""
 
     hero_html = """
 <div class="fs-hero" style="padding:24px 32px;">
     <div style="display:flex; align-items:center; gap:12px; margin-bottom:8px;">
         <span style="font-size:2rem;">🍳</span>
-        <div class="fs-hero-title" style="font-size:1.5rem; margin:0;">AI Recipe Suggestions</div>
+        <div class="fs-hero-title" style="font-size:1.5rem; margin:0;">AI Generated Recipes</div>
     </div>
     <div class="fs-hero-subtitle">
-        Don't let food go to waste! FreshSense AI analyzes your expiring items
-        and suggests delicious recipes powered by <strong style="color:#A78BFA;">Llama 3.1 8B</strong> running locally.
+        Intelligent culinary recommendations generated directly from your inventory, prioritized for items that are about to expire to eliminate food waste.
     </div>
 </div>
 """
     render_html(hero_html)
 
-    # Get items that need attention
+    all_items = dm.get_all_items()
+    if not all_items:
+        render_html(
+            empty_state("🧊", "No items in fridge", "Add items to your fridge to get AI generated recipes!")
+        )
+        return
+
+    # Check for expiring items
     expiring = dm.get_expiring_items(days_threshold=3)
     expired = dm.get_expired_items()
     at_risk = expiring + expired
 
-    if not at_risk:
-        all_items = dm.get_all_items()
-        if not all_items:
-            render_html(
-                empty_state("🧊", "No items in fridge", "Add items to your fridge to get recipe suggestions!")
-            )
-            return
+    # ── Items About to Expire Preview ─────────────────────────────────────
+    st.markdown("### 🥘 Items About to Expire")
 
+    preview_items = at_risk if at_risk else all_items[:4]
+
+    if not at_risk:
         render_html("""
-<div class="fs-alert fs-alert-success">
+<div class="fs-alert fs-alert-success" style="padding:10px 16px; margin-bottom:12px;">
     <span class="fs-alert-icon">🎉</span>
-    <span class="fs-alert-text"><strong>No urgently expiring items!</strong> All your food is fresh.
-    You can still generate recipes from your current inventory.</span>
+    <span class="fs-alert-text"><strong>All items are currently fresh!</strong> Recipes will utilize ingredients with the nearest expiry dates.</span>
 </div>
 """)
-        at_risk = all_items[:6]
 
-    # ── Items Being Used ──────────────────────────────────────────────────
-    st.markdown("### 🥘 Items to Use Up")
-    cols = st.columns(min(len(at_risk), 4))
-    for idx, item in enumerate(at_risk[:8]):
+    cols = st.columns(min(len(preview_items), 4))
+    for idx, item in enumerate(preview_items[:8]):
         col = cols[idx % len(cols)]
         with col:
             days = item.get("days_until_expiry")
+            exp_date = item.get("expiry_date", "N/A")
             if days is not None and days < 0:
                 urgency = "🔴"
-                urgency_text = "Expired"
+                urgency_text = f"Expired ({exp_date})"
             elif days is not None and days <= 1:
                 urgency = "🟠"
-                urgency_text = f"{days}d left"
+                urgency_text = f"{days}d left ({exp_date})"
             elif days is not None and days <= 3:
                 urgency = "🟡"
-                urgency_text = f"{days}d left"
+                urgency_text = f"{days}d left ({exp_date})"
             else:
                 urgency = "🟢"
-                urgency_text = f"{days}d left" if days is not None else "N/A"
+                urgency_text = f"{days}d left ({exp_date})" if days is not None else exp_date
 
             card_item_html = f"""
 <div class="fs-card" style="padding:14px; text-align:center;">
     <div style="font-size:0.9rem; font-weight:600; color:#F1F5F9; margin-bottom:4px;">
         {item.get('name', 'Unknown')[:22]}
     </div>
-    <div style="font-size:0.8rem; color:#94A3B8;">{item.get('category', '')}</div>
-    <div style="margin-top:6px;">{urgency} <span style="font-size:0.78rem; color:#94A3B8;">{urgency_text}</span></div>
+    <div style="font-size:0.8rem; color:#94A3B8;">{item.get('category', 'General')}</div>
+    <div style="margin-top:6px;">{urgency} <span style="font-size:0.75rem; color:#CBD5E1; font-weight:600;">{urgency_text}</span></div>
 </div>
 """
             render_html(card_item_html)
 
     st.markdown("")
 
-    # ── AI Model Status ───────────────────────────────────────────────────
-    ollama_available = _check_ollama_available()
-
-    col_status, col_button = st.columns([3, 1])
-    with col_status:
-        if ollama_available:
-            render_html("""
-<div class="fs-alert fs-alert-success" style="padding:12px 18px;">
-    <span>🤖</span>
-    <span class="fs-alert-text"><strong>Llama 3.1 8B</strong> is available via Ollama — AI-powered recipes ready!</span>
-</div>
-""")
-        else:
-            render_html("""
-<div class="fs-alert fs-alert-warning" style="padding:12px 18px;">
-    <span>⚠️</span>
-    <span class="fs-alert-text"><strong>Ollama not detected.</strong> Using curated recipe library instead.
-    Install Ollama + Llama 3.1 for AI-generated recipes.</span>
-</div>
-""")
-
-    with col_button:
+    # ── Action Button ─────────────────────────────────────────────────────
+    col_btn, col_info = st.columns([1.5, 3])
+    with col_btn:
         generate_clicked = st.button(
-            "🧠 Generate Recipes" if ollama_available else "📖 Show Recipes",
+            "✨ Generate AI Recipes",
             type="primary",
             use_container_width=True,
         )
+    with col_info:
+        st.caption("AI streams 3 recipes in real-time, designed specifically for your expiring ingredients.")
 
     st.markdown("---")
 
-    # ── Recipe Generation ─────────────────────────────────────────────────
-    if generate_clicked or "last_recipes" in st.session_state:
-        if generate_clicked:
-            if ollama_available:
-                with st.spinner("🧠 Llama 3.1 is cooking up recipe ideas..."):
-                    prompt = _build_prompt(at_risk)
-                    response = _query_llama(prompt)
+    # ── Real-Time Streaming Recipe Generation & Display ───────────────────
+    if generate_clicked:
+        st.markdown("### ✨ AI Generated Recipes")
+        try:
+            # st.write_stream renders tokens live word-by-word with typewriter animation
+            recipe_stream = _stream_ai_recipes(all_items, model="llama3.1")
+            full_text = st.write_stream(recipe_stream)
 
-                    if response:
-                        st.session_state.last_recipes = {"type": "ai", "content": response}
-                    else:
-                        recipes = _get_fallback_recipes(at_risk)
-                        st.session_state.last_recipes = {"type": "fallback", "content": recipes}
+            if full_text and full_text.strip():
+                st.session_state.ai_recipes_cache = {
+                    "is_ai": True,
+                    "content": full_text,
+                }
             else:
-                recipes = _get_fallback_recipes(at_risk)
-                st.session_state.last_recipes = {"type": "fallback", "content": recipes}
+                fallback = _get_fallback_recipes(all_items)
+                st.session_state.ai_recipes_cache = {
+                    "is_ai": False,
+                    "content": fallback,
+                }
+                st.rerun()
+        except Exception as e:
+            print(f"[Streaming Error - Triggering fallback]: {e}")
+            fallback = _get_fallback_recipes(all_items)
+            st.session_state.ai_recipes_cache = {
+                "is_ai": False,
+                "content": fallback,
+            }
+            st.rerun()
 
-        # Display recipes
-        if "last_recipes" in st.session_state:
-            result = st.session_state.last_recipes
+    elif "ai_recipes_cache" in st.session_state:
+        st.markdown("### ✨ AI Generated Recipes")
+        cached = st.session_state.ai_recipes_cache
 
-            if result["type"] == "ai":
-                st.markdown("### 🤖 AI-Generated Recipes")
-                with st.container():
-                    st.info(f"Generated by Llama 3.1 8B · Based on {len(at_risk)} items")
-                    st.markdown(result["content"])
+        if cached.get("is_ai"):
+            st.markdown(cached["content"])
+        else:
+            recipes = cached.get("content", [])
+            for recipe in recipes:
+                diff_colors = {"Easy": "#34D399", "Medium": "#FCD34D", "Hard": "#FCA5A5"}
+                diff_color = diff_colors.get(recipe.get("difficulty", "Easy"), "#94A3B8")
+                ingredients_html = " · ".join(recipe.get("ingredients", []))
 
-            else:
-                st.markdown("### 📖 Suggested Recipes")
-                recipes = result["content"]
-
-                for i, recipe in enumerate(recipes):
-                    diff_colors = {"Easy": "#34D399", "Medium": "#FCD34D", "Hard": "#FCA5A5"}
-                    diff_color = diff_colors.get(recipe.get("difficulty", "Easy"), "#94A3B8")
-
-                    ingredients_html = " · ".join(recipe.get("ingredients", []))
-
-                    recipe_card_html = f"""
+                recipe_card_html = f"""
 <div class="fs-recipe-card">
     <div class="fs-recipe-title">🍽️ {recipe['name']}</div>
     <div class="fs-recipe-meta">
@@ -347,28 +360,15 @@ def render_recipes(dm: DataManager):
     </div>
 </div>
 """
-                    render_html(recipe_card_html)
+                render_html(recipe_card_html)
 
     # ── Tips Section ──────────────────────────────────────────────────────
     st.markdown("---")
     with st.expander("💡 Food Waste Reduction Tips"):
         st.markdown("""
         - **FIFO Method**: First In, First Out — use older items first.
-        - **Freezing**: Most items can be frozen to extend shelf life significantly.
-        - **Meal Planning**: Plan meals around items that are expiring soonest.
-        - **Portion Control**: Buy only what you need for the week.
-        - **Proper Storage**: Keep items at their recommended temperatures.
-        - **Composting**: If items do expire, consider composting instead of discarding.
-        """)
-
-    with st.expander("🔧 Setting Up Local AI (Llama 3.1)"):
-        st.markdown("""
-        To enable AI-powered recipe suggestions:
-
-        1. **Install Ollama**: Visit [ollama.ai](https://ollama.ai) and download for your OS.
-        2. **Pull the model**: Run `ollama pull llama3.1:8b` in your terminal.
-        3. **Start Ollama**: It runs as a background service automatically.
-        4. **Refresh this page**: FreshSense will auto-detect the model!
-
-        The model runs 100% locally — no internet, no API keys, complete privacy.
+        - **Batch Cooking**: Use expiring vegetables or dairy into broths, bakes, or sauces.
+        - **Freezing**: Most items can be frozen before expiry to extend shelf life by months.
+        - **Meal Planning**: Plan upcoming meals around items that are expiring soonest.
+        - **Proper Storage**: Keep temperature at 3-4°C to optimize freshness.
         """)

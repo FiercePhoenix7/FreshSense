@@ -81,7 +81,7 @@ def render_sidebar(dm: DataManager) -> str:
                     return f"🔔  Alert Center  ({total_alerts} ⚠️)"
                 return "🔔  Alert Center (All Clean)"
             elif page_key == "Recipes":
-                return "🍳  AI Chef · Llama 3.1"
+                return "🍳  AI Generated Recipes"
             elif page_key == "Analytics":
                 return "📈  Waste & Fresh Analytics"
             return page_key
@@ -189,32 +189,5 @@ def render_sidebar(dm: DataManager) -> str:
 </div>
 """
             render_html(f'<div class="fs-radar-list">{items_html}</div>')
-
-        render_html('<div class="fs-nav-divider"></div>')
-
-        # ── 5. System Architecture / Hardware Status ─────────────────────
-        footer_html = """
-<div class="fs-footer-card">
-    <div class="fs-footer-hw-line">
-        <span class="fs-hw-icon">📷</span>
-        <span class="fs-hw-label">Vision Barcode:</span>
-        <span class="fs-hw-val">pyzbar Ready</span>
-    </div>
-    <div class="fs-footer-hw-line">
-        <span class="fs-hw-icon">🧠</span>
-        <span class="fs-hw-label">AI Engine:</span>
-        <span class="fs-hw-val">Llama 3.1 8B</span>
-    </div>
-    <div class="fs-footer-hw-line">
-        <span class="fs-hw-icon">🗄️</span>
-        <span class="fs-hw-label">Database:</span>
-        <span class="fs-hw-val">inventory.json</span>
-    </div>
-    <div class="fs-footer-credit">
-        Innovation & Entrepreneurship Course Prototype
-    </div>
-</div>
-"""
-        render_html(footer_html)
 
     return st.session_state.current_page
