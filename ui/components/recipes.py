@@ -166,7 +166,7 @@ For each recipe, use this clean markdown format:
 Make the recipes appetizing, practical, and focused on utilizing the expiring items."""
 
 
-def _stream_ai_recipes(items: list, model: str = "llama3.1"):
+def _stream_ai_recipes(items: list, model: str = "llama3.1:8b"):
     """
     Generator that streams recipe chunks directly from the local AI model.
     Yields string tokens in real time.
@@ -308,7 +308,7 @@ def render_recipes(dm: DataManager):
         st.markdown("### ✨ AI Generated Recipes")
         try:
             # st.write_stream renders tokens live word-by-word with typewriter animation
-            recipe_stream = _stream_ai_recipes(all_items, model="llama3.1")
+            recipe_stream = _stream_ai_recipes(all_items, model="llama3.1:8b")
             full_text = st.write_stream(recipe_stream)
 
             if full_text and full_text.strip():

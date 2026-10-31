@@ -130,7 +130,8 @@ def render_dashboard(dm: DataManager):
             cat_emojis = {
                 "Dairy": "🥛", "Dairy & Eggs": "🥚", "Bakery": "🍞",
                 "Beverages": "🥤", "Snacks": "🍿", "Spreads": "🫙",
-                "Produce": "🥬", "Meat": "🥩", "Seafood": "🐟",
+                "Produce": "🥬", "Fruit": "🍌", "Vegetable": "🥕", "Vegetables": "🥦",
+                "Meat": "🥩", "Seafood": "🐟",
                 "Frozen": "🧊", "Packaged Goods": "📦", "General": "🛒",
                 "Potato crisps": "🥔", "Protein": "💪",
             }

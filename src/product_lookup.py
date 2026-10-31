@@ -42,13 +42,12 @@ class ProductLookupService:
         except Exception as e:
             print(f"[ProductLookupService] Error saving catalog: {e}")
 
-    def register_product(self, barcode, name, category="General", brand="Unknown", shelf_life_days=7):
+    def register_product(self, barcode, name, category="General", shelf_life_days=7):
         """Allows dynamic registration of a new barcode to the local catalog."""
         barcode_clean = str(barcode).strip()
         self.catalog[barcode_clean] = {
             "name": name,
             "category": category,
-            "brand": brand,
             "shelf_life_days": int(shelf_life_days)
         }
         self.save_catalog()
@@ -123,7 +122,6 @@ class ProductLookupService:
                     if data.get("status") == 1 and "product" in data:
                         prod = data["product"]
                         name = prod.get("product_name") or prod.get("generic_name") or "Unknown Product"
-                        brand = prod.get("brands") or "Unknown Brand"
                         categories = prod.get("categories", "General Grocery")
                         first_cat = categories.split(",")[0].strip() if categories else "General Grocery"
                         
@@ -140,7 +138,6 @@ class ProductLookupService:
 
                         return {
                             "name": name,
-                            "brand": brand,
                             "category": first_cat,
                             "shelf_life_days": 10,
                             "explicit_expiry": parsed_exp
@@ -159,11 +156,9 @@ class ProductLookupService:
             "barcode": str,
             "name": str,
             "category": str,
-            "brand": str,
             "expiry_date": str (YYYY-MM-DD),
             "days_until_expiry": int,
-            "status": "Fresh" | "Expiring Soon" | "Expired",
-            "source": "gs1" | "catalog" | "openfoodfacts" | "fallback"
+            "status": "Fresh" | "Expiring Soon" | "Expired"
         }
         """
         barcode_clean = str(raw_barcode_data).strip()
@@ -174,22 +169,19 @@ class ProductLookupService:
         lookup_key = gs1_gtin if gs1_gtin else barcode_clean
 
         product_info = None
-        source = "fallback"
+        is_fallback = False
 
         # Step 2: Check local catalog (try exact match or trimmed GTIN)
         if lookup_key in self.catalog:
             product_info = self.catalog[lookup_key]
-            source = "catalog"
         elif barcode_clean in self.catalog:
             product_info = self.catalog[barcode_clean]
-            source = "catalog"
         else:
             # Also try matching without leading zeros (e.g., UPC-A vs EAN-13)
             stripped_key = lookup_key.lstrip('0')
             for key, val in self.catalog.items():
                 if key.lstrip('0') == stripped_key:
                     product_info = val
-                    source = "catalog"
                     break
 
         # Step 3: Try Open Food Facts if not found locally (only when network calls are allowed)
@@ -197,17 +189,15 @@ class ProductLookupService:
             off_info = self._fetch_open_food_facts(lookup_key)
             if off_info:
                 product_info = off_info
-                source = "openfoodfacts"
 
         # Step 4: Fallback for generic/unrecognized packaged goods
         if not product_info:
             product_info = {
                 "name": f"Packaged Item ({lookup_key[-6:] if len(lookup_key) > 6 else lookup_key})",
-                "brand": "Standard Packaged",
                 "category": "Packaged Goods",
                 "shelf_life_days": 7
             }
-            source = "fallback"
+            is_fallback = True
 
         # Determine Expiry Date:
         # Priority 1: GS1 parsed expiry date
@@ -215,7 +205,6 @@ class ProductLookupService:
         # Priority 3: Calculated from shelf_life_days: today + shelf_life_days
         if gs1_expiry:
             final_expiry = gs1_expiry
-            source = "gs1"
         elif product_info.get("explicit_expiry"):
             final_expiry = product_info["explicit_expiry"]
         elif product_info.get("shelf_life_days"):
@@ -235,13 +224,10 @@ class ProductLookupService:
 
         return {
             "barcode": lookup_key,
-            "raw_barcode": barcode_clean,
             "name": product_info.get("name", "Unknown Product"),
-            "brand": product_info.get("brand", "Unknown Brand"),
             "category": product_info.get("category", "General"),
             "expiry_date": final_expiry.strftime("%Y-%m-%d"),
             "days_until_expiry": days_left,
             "status": status,
-            "source": source
+            "_is_fallback": is_fallback
         }
-

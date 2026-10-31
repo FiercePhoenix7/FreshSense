@@ -1,0 +1,18 @@
+{
+  "Banana": {
+    "shelf_life": 5,
+    "category": "Fruit"
+  },
+  "Egg": {
+    "shelf_life": 21,
+    "category": "Dairy"
+  },
+  "Carrot": {
+    "shelf_life": 21,
+    "category": "Vegetable"
+  },
+  "Tomato": {
+    "shelf_life": 7,
+    "category": "Vegetable"
+  }
+}

@@ -209,20 +209,21 @@ class FreshSenseScanner:
             product = self.product_lookup.lookup(data, allow_network=False)
             self.lookup_cache[data] = product
 
-            if product.get("source") == "fallback" and data not in self._pending_network_lookups:
+            if product.get("_is_fallback") and data not in self._pending_network_lookups:
                 self._pending_network_lookups.add(data)
                 threading.Thread(
                     target=self._async_enrich_product,
-                    args=(data, b_type),
+                    args=(data, b_type, product.get("name")),
                     daemon=True,
                 ).start()
         return product
 
-    def _async_enrich_product(self, data, b_type):
+    def _async_enrich_product(self, data, b_type, previous_name):
         """Fetches Open Food Facts metadata off the UI thread so video playback never freezes."""
         try:
             enriched = self.product_lookup.lookup(data, allow_network=True)
-            if enriched.get("source") == "openfoodfacts":
+            if not enriched.get("_is_fallback"):
+                enriched["previous_name"] = previous_name
                 self.lookup_cache[data] = enriched
                 self.root.after(0, self._apply_enriched_product, data, b_type, enriched)
         except Exception:
@@ -237,8 +238,7 @@ class FreshSenseScanner:
     def _update_removal_display(self, product, barcode_type, removed=True):
         """Updates the Tkinter UI card after a Remove-mode scan."""
         name = product.get("name", "Unknown Product")
-        barcode = product.get("barcode")
-        units_left = self.inventory_manager.count_item(barcode)
+        units_left = self.inventory_manager.count_item(name)
         
         if removed:
             color = "#c62828"  # Red
@@ -252,16 +252,14 @@ class FreshSenseScanner:
         self.card_title.config(text=title, fg=color)
         self.card_expiry.config(text=detail, fg=color)
         self.card_meta.config(
-            text=f"Category: {product.get('category', 'General')}  |  Code: {barcode} ({barcode_type})  |  Units left: {units_left}",
+            text=f"Category: {product.get('category', 'General')}  |  Units left: {units_left}",
             fg="#555555"
         )
         
     def _update_ui_display(self, product, barcode_type, is_new=True):
         """Updates the Tkinter UI card with product details and expiry."""
         name = product.get("name", "Unknown Product")
-        brand = product.get("brand", "Unknown")
         category = product.get("category", "General")
-        barcode = product.get("barcode")
         expiry = product.get("expiry_date")
         days = product.get("days_until_expiry", 0)
         status = product.get("status", "Fresh")
@@ -289,7 +287,7 @@ class FreshSenseScanner:
         
         inventory_msg = "✓ Logged to inventory" if is_new else "✓ Already in inventory"
         self.card_meta.config(
-            text=f"Category: {category}  |  Brand: {brand}  |  Code: {barcode} ({barcode_type})  |  {inventory_msg}",
+            text=f"Category: {category}  |  {inventory_msg}",
             fg="#555555"
         )
 

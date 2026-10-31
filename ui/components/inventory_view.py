@@ -33,7 +33,7 @@ def render_inventory(dm: DataManager):
     f1, f2, f3, f4 = st.columns([3, 2, 2, 1])
 
     with f1:
-        search = st.text_input("🔎 Search items", placeholder="Search by name, brand, barcode...")
+        search = st.text_input("🔎 Search items", placeholder="Search by name or category...")
     with f2:
         categories = ["All"] + dm.get_categories()
         selected_cat = st.selectbox("🏷️ Category", categories)
@@ -51,8 +51,6 @@ def render_inventory(dm: DataManager):
         filtered = [
             i for i in filtered
             if search_lower in i.get("name", "").lower()
-            or search_lower in i.get("brand", "").lower()
-            or search_lower in i.get("barcode", "").lower()
             or search_lower in i.get("category", "").lower()
         ]
 
@@ -99,19 +97,17 @@ def render_inventory(dm: DataManager):
     else:
         df = pd.DataFrame(filtered)
         if not df.empty:
-            display_cols = ["entry_id", "name", "brand", "category", "expiry_date", "days_until_expiry", "status", "source", "scanned_at"]
+            display_cols = ["entry_id", "name", "category", "expiry_date", "days_until_expiry", "status", "scanned_at"]
             available_cols = [c for c in display_cols if c in df.columns]
             df_display = df[available_cols].copy()
 
             rename_map = {
                 "entry_id": "ID",
                 "name": "Product",
-                "brand": "Brand",
                 "category": "Category",
                 "expiry_date": "Expires",
                 "days_until_expiry": "Days Left",
                 "status": "Status",
-                "source": "Source",
                 "scanned_at": "Scanned At",
             }
             df_display.rename(columns=rename_map, inplace=True)

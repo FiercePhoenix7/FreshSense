@@ -78,9 +78,14 @@ def render_analytics(dm: DataManager):
     products = dm.get_product_catalog()
     cat_shelf = {}
     cat_counts = {}
-    for barcode, prod in products.items():
+    for _, prod in products.items():
         cat = prod.get("category", "General")
-        shelf = prod.get("shelf_life_days", 0)
+        shelf = prod.get("shelf_life_days", prod.get("shelf_life", 0))
+        cat_shelf[cat] = cat_shelf.get(cat, 0) + shelf
+        cat_counts[cat] = cat_counts.get(cat, 0) + 1
+    for _, prod in getattr(dm, "items_shelf_life", {}).items():
+        cat = prod.get("category", "General")
+        shelf = prod.get("shelf_life", 0)
         cat_shelf[cat] = cat_shelf.get(cat, 0) + shelf
         cat_counts[cat] = cat_counts.get(cat, 0) + 1
 

@@ -53,12 +53,11 @@ def alert_banner(icon: str, message: str, level: str = "warning") -> str:
 def item_card_html(item: dict) -> str:
     """Returns styled HTML card for a single inventory item."""
     name = item.get("name", "Unknown")
-    brand = item.get("brand", "Unknown")
     category = item.get("category", "General")
     expiry = item.get("expiry_date", "N/A")
     days = item.get("days_until_expiry")
     status = item.get("status", "Unknown")
-    barcode = item.get("barcode", "")
+    scanned_at = item.get("scanned_at", "")
 
     badge = status_badge(status)
 
@@ -79,11 +78,16 @@ def item_card_html(item: dict) -> str:
     cat_emojis = {
         "Dairy": "🥛", "Dairy & Eggs": "🥚", "Bakery": "🍞",
         "Beverages": "🥤", "Snacks": "🍿", "Spreads": "🫙",
-        "Produce": "🥬", "Meat": "🥩", "Seafood": "🐟",
+        "Produce": "🥬", "Fruit": "🍌", "Vegetable": "🥕", "Vegetables": "🥦",
+        "Meat": "🥩", "Seafood": "🐟",
         "Frozen": "🧊", "Packaged Goods": "📦", "General": "🛒",
         "Potato crisps": "🥔", "Protein": "💪",
     }
     emoji = cat_emojis.get(category, "🛒")
+    meta_parts = [category]
+    if scanned_at:
+        meta_parts.append(f"Added {scanned_at}")
+    meta_str = " · ".join(meta_parts)
 
     return f"""
 <div class="fs-card" style="padding: 18px 22px;">
@@ -95,7 +99,7 @@ def item_card_html(item: dict) -> str:
                 {badge}
             </div>
             <div class="fs-item-meta" style="margin-bottom:4px;">
-                {brand} · {category} · <code style="font-size:0.75rem; background:rgba(51,65,85,0.5); padding:2px 6px; border-radius:4px; color:#94A3B8;">{barcode}</code>
+                {meta_str}
             </div>
         </div>
         <div style="text-align:right; min-width:140px;">

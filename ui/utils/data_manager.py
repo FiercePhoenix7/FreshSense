@@ -17,11 +17,13 @@ class DataManager:
         self.project_root = project_root
         self.inventory_path = os.path.join(project_root, "data", "inventory.json")
         self.products_path = os.path.join(project_root, "data", "products.json")
+        self.shelf_life_path = os.path.join(project_root, "data", "items_shelf_life.json")
         self.last_inventory_mtime: float = 0.0
         self.last_inventory_size: int = 0
         self.last_products_mtime: float = 0.0
         self.inventory: List[Dict] = []
         self.products: Dict = {}
+        self.items_shelf_life: Dict = self._load_json_dict(self.shelf_life_path) or {}
         self.reload(force=True)
 
     # ── Loading & External Sync Tracking ─────────────────────────────────
@@ -142,17 +144,17 @@ class DataManager:
         return len(self.inventory)
 
     def get_unique_items(self) -> List[Dict]:
-        """Get inventory de-duplicated by barcode (keeps latest scan)."""
+        """Get inventory de-duplicated by product name (keeps latest scan)."""
         seen = {}
         for item in self.inventory:
-            bc = item.get("barcode", "")
-            if bc not in seen:
-                seen[bc] = item
+            key = item.get("name", "").strip().lower()
+            if key not in seen:
+                seen[key] = item
             else:
-                existing_time = seen[bc].get("scanned_at", "")
+                existing_time = seen[key].get("scanned_at", "")
                 new_time = item.get("scanned_at", "")
                 if new_time > existing_time:
-                    seen[bc] = item
+                    seen[key] = item
         return list(seen.values())
 
     def get_expiring_items(self, days_threshold: int = 3) -> List[Dict]:
@@ -188,15 +190,6 @@ class DataManager:
                 cats.add(cat)
         return sorted(cats)
 
-    def get_brands(self) -> List[str]:
-        """Return sorted unique brands from inventory."""
-        brands = set()
-        for item in self.inventory:
-            brand = item.get("brand", "Unknown")
-            if brand:
-                brands.add(brand)
-        return sorted(brands)
-
     def get_items_by_status(self, status: str) -> List[Dict]:
         return [item for item in self.inventory if item.get("status") == status]
 
@@ -227,20 +220,17 @@ class DataManager:
 
     # ── Mutations ─────────────────────────────────────────────────────────
 
+    def _next_entry_id(self) -> int:
+        return max((item.get("entry_id", 0) for item in self.inventory), default=0) + 1
+
     def add_item(
         self,
         name: str,
         category: str = "General",
-        brand: str = "Unknown",
         expiry_date: str = "",
-        barcode: str = "",
-        source: str = "manual",
     ) -> Dict:
         """Add a new item to the inventory manually."""
         today = date.today()
-
-        if not barcode:
-            barcode = f"MANUAL-{datetime.now().strftime('%Y%m%d%H%M%S')}"
 
         days_left = None
         status = "Fresh"
@@ -256,16 +246,13 @@ class DataManager:
                 pass
 
         entry = {
-            "entry_id": len(self.inventory) + 1,
-            "barcode": barcode,
+            "entry_id": self._next_entry_id(),
             "name": name,
             "category": category,
-            "brand": brand,
             "scanned_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "expiry_date": expiry_date,
             "days_until_expiry": days_left,
             "status": status,
-            "source": source,
         }
 
         self.inventory.append(entry)
@@ -296,11 +283,10 @@ class DataManager:
     def get_product_catalog(self) -> Dict:
         return self.products
 
-    def add_to_catalog(self, barcode: str, name: str, category: str, brand: str, shelf_life_days: int):
+    def add_to_catalog(self, barcode: str, name: str, category: str, shelf_life_days: int):
         self.products[barcode] = {
             "name": name,
             "category": category,
-            "brand": brand,
             "shelf_life_days": shelf_life_days,
         }
         self._save_products()
