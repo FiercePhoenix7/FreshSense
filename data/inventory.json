@@ -19,15 +19,6 @@
   },
   {
     "entry_id": 3,
-    "name": "Egg",
-    "category": "Dairy",
-    "scanned_at": "2026-10-26 17:19:39",
-    "expiry_date": "2026-11-02",
-    "days_until_expiry": 3,
-    "status": "Expiring Soon"
-  },
-  {
-    "entry_id": 4,
     "name": "Chicken",
     "category": "Meat",
     "scanned_at": "2026-10-26 17:19:39",
@@ -36,12 +27,12 @@
     "status": "Expiring Soon"
   },
   {
-    "entry_id": 5,
-    "name": "Banana",
-    "category": "Fruit",
-    "scanned_at": "2026-10-31 20:11:08",
-    "expiry_date": "2026-11-05",
-    "days_until_expiry": 5,
+    "entry_id": 12,
+    "name": "Tomato",
+    "category": "Vegetable",
+    "scanned_at": "2026-10-31 20:35:38",
+    "expiry_date": "2026-11-07",
+    "days_until_expiry": 7,
     "status": "Fresh"
   }
 ]

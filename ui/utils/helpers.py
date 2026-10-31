@@ -76,9 +76,9 @@ def item_card_html(item: dict) -> str:
     bar = freshness_bar(days, max_days=30)
 
     cat_emojis = {
-        "Dairy": "🥛", "Dairy & Eggs": "🥚", "Bakery": "🍞",
+        "Dairy": "🥚", "Dairy & Eggs": "🥚", "Bakery": "🍞",
         "Beverages": "🥤", "Snacks": "🍿", "Spreads": "🫙",
-        "Produce": "🥬", "Fruit": "🍌", "Vegetable": "🥕", "Vegetables": "🥦",
+        "Produce": "🥬", "Fruit": "🍌", "Vegetable": "🥦", "Vegetables": "🥦",
         "Meat": "🥩", "Seafood": "🐟",
         "Frozen": "🧊", "Packaged Goods": "📦", "General": "🛒",
         "Potato crisps": "🥔", "Protein": "💪",

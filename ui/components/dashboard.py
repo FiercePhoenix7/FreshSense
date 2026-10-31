@@ -128,9 +128,9 @@ def render_dashboard(dm: DataManager):
         cat_dist = dm.get_category_distribution()
         if cat_dist:
             cat_emojis = {
-                "Dairy": "🥛", "Dairy & Eggs": "🥚", "Bakery": "🍞",
+                "Dairy": "🥚", "Dairy & Eggs": "🥚", "Bakery": "🍞",
                 "Beverages": "🥤", "Snacks": "🍿", "Spreads": "🫙",
-                "Produce": "🥬", "Fruit": "🍌", "Vegetable": "🥕", "Vegetables": "🥦",
+                "Produce": "🥬", "Fruit": "🍌", "Vegetable": "🥦", "Vegetables": "🥦",
                 "Meat": "🥩", "Seafood": "🐟",
                 "Frozen": "🧊", "Packaged Goods": "📦", "General": "🛒",
                 "Potato crisps": "🥔", "Protein": "💪",

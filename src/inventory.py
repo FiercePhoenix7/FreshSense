@@ -101,10 +101,20 @@ class InventoryManager:
             "days_until_expiry": product_details.get("days_until_expiry"),
             "status": product_details.get("status", "Fresh"),
         }
+        if product_details.get("barcode"):
+            entry["barcode"] = str(product_details["barcode"]).strip()
 
         self.inventory.append(entry)
         self._save_inventory()
         return True, entry
+
+    def has_barcode(self, barcode):
+        """Returns True if an item with the given barcode is currently in inventory.json."""
+        if not barcode:
+            return False
+        self.inventory = self._load_inventory()
+        target = str(barcode).strip()
+        return any(str(item.get("barcode", "")).strip() == target for item in self.inventory)
 
     def reset_cooldowns(self):
         """Clears per-item cooldowns (e.g. when switching between Insert/Remove modes)."""
@@ -113,7 +123,7 @@ class InventoryManager:
     def remove_item(self, product_details, bypass_cooldown=False):
         """
         Removes one unit of a product from inventory if not within cooldown.
-        The oldest logged entry with a matching name is removed first (FIFO).
+        Matches by barcode first (if provided), otherwise by name (FIFO).
         Returns:
           (True, removed_entry)                    -> item removed
           (False, "Item not found in inventory")   -> item not in inventory
@@ -124,12 +134,22 @@ class InventoryManager:
             return False, None
 
         self.inventory = self._load_inventory()
+        target_barcode = str(product_details.get("barcode") or "").strip()
         target_name = product_details.get("name", "").lower()
-        for index, item in enumerate(self.inventory):
-            if item.get("name", "").lower() == target_name:
-                removed_item = self.inventory.pop(index)
-                self._save_inventory()
-                return True, removed_item
+
+        if target_barcode:
+            for index, item in enumerate(self.inventory):
+                if str(item.get("barcode", "")).strip() == target_barcode:
+                    removed_item = self.inventory.pop(index)
+                    self._save_inventory()
+                    return True, removed_item
+
+        if target_name:
+            for index, item in enumerate(self.inventory):
+                if item.get("name", "").lower() == target_name:
+                    removed_item = self.inventory.pop(index)
+                    self._save_inventory()
+                    return True, removed_item
 
         return False, "Item not found in inventory"
 
@@ -156,6 +176,8 @@ class InventoryManager:
         print(f"  FRESHSENSE - {header_tag}")
         print(border)
         print(f"  Product Name : {product_details.get('name')}")
+        if product_details.get("barcode"):
+            print(f"  Barcode      : {product_details.get('barcode')}")
         print(f"  Category     : {product_details.get('category')}")
         print(f"  Expiry Date  : {product_details.get('expiry_date')} ({days_str})")
         print(f"  Freshness    : {product_details.get('status')}")
@@ -173,11 +195,13 @@ class InventoryManager:
         print(f"  FRESHSENSE - {header_tag}")
         print(border)
         print(f"  Product Name : {name}")
+        if product_details.get("barcode"):
+            print(f"  Barcode      : {product_details.get('barcode')}")
         print(f"  Category     : {product_details.get('category')}")
         if success:
             print(f"  Expiry Date  : {product_details.get('expiry_date')}")
             print(f"  Logged At    : {product_details.get('scanned_at', 'N/A')}")
-        print(f"  Units Left   : {self.count_item(name)}")
+        print(f"  Units Left   : {self.count_item(name or product_details.get('barcode'))}")
         print(border + "\n", flush=True)
 
     def get_all_items(self):

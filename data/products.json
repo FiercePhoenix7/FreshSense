@@ -1,62 +1,7 @@
 {
-  "8901030123456": {
-    "name": "Amul Taaza Fresh Toned Milk (1L)",
-    "category": "Dairy",
-    "shelf_life_days": 7
-  },
-  "012345678905": {
-    "name": "Whole Wheat Sandwich Bread (400g)",
-    "category": "Bakery",
-    "shelf_life_days": 5
-  },
-  "041220790886": {
-    "name": "Greek Plain Yogurt (500g)",
-    "category": "Dairy",
-    "shelf_life_days": 14
-  },
-  "4006381333931": {
-    "name": "Organic Free-Range Large Eggs (Pack of 6)",
-    "category": "Dairy & Eggs",
-    "shelf_life_days": 21
-  },
-  "5449000000996": {
-    "name": "Coca-Cola Original Taste (330ml)",
-    "category": "Beverages",
-    "shelf_life_days": 180
-  },
-  "7622210985871": {
-    "name": "Oreo Vanilla Creme Biscuits (120g)",
-    "category": "Snacks",
-    "shelf_life_days": 90
-  },
-  "3017620422003": {
-    "name": "Nutella Hazelnut Cocoa Spread (350g)",
-    "category": "Spreads",
-    "shelf_life_days": 120
-  },
-  "8901491101837": {
-    "name": "Lipton Pure Green Tea (25 Tea Bags)",
-    "category": "Beverages",
-    "shelf_life_days": 180
-  },
-  "8901063012803": {
-    "name": "Britannia Treat Butter Croissant",
-    "category": "Bakery",
-    "shelf_life_days": 10
-  },
-  "078742351896": {
-    "name": "Sharp Cheddar Cheese Block (200g)",
-    "category": "Dairy",
-    "shelf_life_days": 30
-  },
-  "021130070411": {
-    "name": "Organic Baby Spinach (150g)",
-    "category": "Produce",
-    "shelf_life_days": 6
-  },
-  "8901725181222": {
-    "name": "Mother Dairy Fresh Paneer (200g)",
-    "category": "Dairy",
-    "shelf_life_days": 12
+  "8902080002788": {
+    "name": "Tropicana - Litchi",
+    "category": "Juice",
+    "shelf_life_days": 150
   }
 }
