@@ -91,6 +91,7 @@ class InventoryManager:
         if not bypass_cooldown and not self.should_process(key):
             return False, None
 
+        self.inventory = self._load_inventory()
         entry = {
             "entry_id": self._next_entry_id(),
             "name": product_details.get("name", "Unknown Product"),
@@ -109,7 +110,7 @@ class InventoryManager:
         """Clears per-item cooldowns (e.g. when switching between Insert/Remove modes)."""
         self.last_scans.clear()
 
-    def remove_item(self, product_details):
+    def remove_item(self, product_details, bypass_cooldown=False):
         """
         Removes one unit of a product from inventory if not within cooldown.
         The oldest logged entry with a matching name is removed first (FIFO).
@@ -119,9 +120,10 @@ class InventoryManager:
           (False, None)                            -> skipped due to cooldown
         """
         key = self._item_key(product_details)
-        if not self.should_process(key):
+        if not bypass_cooldown and not self.should_process(key):
             return False, None
 
+        self.inventory = self._load_inventory()
         target_name = product_details.get("name", "").lower()
         for index, item in enumerate(self.inventory):
             if item.get("name", "").lower() == target_name:

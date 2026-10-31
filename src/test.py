@@ -2,6 +2,7 @@ import os
 import sys
 import json
 import cv2
+import numpy as np
 import threading
 import queue
 from collections import defaultdict, deque
@@ -84,14 +85,24 @@ class YOLOWorldScanner:
     def _run_inference(self):
         while self.running:
             if not self.frame_queue.empty():
-                frame = self.frame_queue.get()
+                item = self.frame_queue.get()
+                if isinstance(item, tuple):
+                    display_frame, detect_frame, left_mask = item
+                else:
+                    display_frame, detect_frame, left_mask = item, item, None
                 
                 # device=0 forces it to use your RTX 4060
-                results = self.model.predict(source=frame, verbose=False, conf=0.15, device=0)
+                results = self.model.predict(source=detect_frame, verbose=False, conf=0.15, device=0)
                 
                 detections = []
                 for box in results[0].boxes:
                     x1, y1, x2, y2 = map(int, box.xyxy[0])
+                    if left_mask is not None:
+                        cx = min(max((x1 + x2) // 2, 0), left_mask.shape[1] - 1)
+                        cy = min(max((y1 + y2) // 2, 0), left_mask.shape[0] - 1)
+                        if not left_mask[cy, cx]:
+                            continue
+
                     cls_id = int(box.cls[0])
                     conf = float(box.conf[0])
                     class_name = self.model.names[cls_id]
@@ -103,7 +114,7 @@ class YOLOWorldScanner:
                     })
                 
                 if not self.result_queue.full():
-                    self.result_queue.put((frame, detections))
+                    self.result_queue.put((display_frame, detections))
 
     def stop(self):
         self.running = False
@@ -114,7 +125,8 @@ class ConsecutiveDetectionTracker:
     """
     Verifies that a detected object is genuinely present for at least
     `min_frames` (20) out of `window_size` (30) consecutive frames before
-    looking up its shelf life in items_shelf_life.json and logging to inventory.json.
+    looking up its shelf life in items_shelf_life.json and either logging to
+    or removing from inventory.json depending on the active mode ('INSERT' or 'REMOVE').
     """
 
     def __init__(self, shelf_life_db, inventory_manager, window_size=WINDOW_SIZE, min_frames=MIN_CONFIRM_FRAMES):
@@ -122,14 +134,24 @@ class ConsecutiveDetectionTracker:
         self.inventory_manager = inventory_manager
         self.window_size = window_size
         self.min_frames = min_frames
+        self.mode = "INSERT"  # 'INSERT' or 'REMOVE'
         self.windows = defaultdict(lambda: deque(maxlen=self.window_size))
-        self.logged_active = set()
+        self.processed_active = {}  # item_name -> action status tag ('LOGGED', 'REMOVED', 'NOT IN INV')
+
+    def set_mode(self, mode):
+        """Switches between 'INSERT' and 'REMOVE' modes and resets active tracking windows."""
+        if mode in ("INSERT", "REMOVE") and mode != self.mode:
+            self.mode = mode
+            self.windows.clear()
+            self.processed_active.clear()
+            self.inventory_manager.reset_cooldowns()
+            print(f"[SmartFridge] Switched to {self.mode} mode", flush=True)
 
     def update(self, detections):
         """
         Processes one frame's detections, updates the 30-frame sliding windows,
-        and logs newly confirmed items (>= 20/30 frames) to inventory.json.
-        Returns a dict mapping canonical_name -> (hits_in_window, is_logged).
+        and logs or removes newly confirmed items (>= 20/30 frames) in inventory.json.
+        Returns a dict mapping canonical_name -> (hits_in_window, status_tag_or_None).
         """
         present_canonical = set()
         for det in detections:
@@ -147,8 +169,8 @@ class ConsecutiveDetectionTracker:
             window.append(is_present)
             hits = sum(window)
 
-            # Confirm and log if seen in >= 20 out of 30 consecutive frames
-            if hits >= self.min_frames and item_name not in self.logged_active:
+            # Confirm and execute action if seen in >= 20 out of 30 consecutive frames
+            if hits >= self.min_frames and item_name not in self.processed_active:
                 info = self.shelf_life_db.get(item_name)
                 if info:
                     shelf_days = int(info.get("shelf_life", 7))
@@ -171,24 +193,62 @@ class ConsecutiveDetectionTracker:
                         "status": status,
                     }
 
-                    added, _ = self.inventory_manager.add_item(product_details, bypass_cooldown=True)
-                    if added:
-                        self.inventory_manager.print_item(product_details, is_new=True)
-                    self.logged_active.add(item_name)
+                    if self.mode == "INSERT":
+                        added, _ = self.inventory_manager.add_item(product_details, bypass_cooldown=True)
+                        if added:
+                            self.inventory_manager.print_item(product_details, is_new=True)
+                        self.processed_active[item_name] = "LOGGED"
+                    else:
+                        removed, result = self.inventory_manager.remove_item(product_details, bypass_cooldown=True)
+                        if removed:
+                            self.inventory_manager.print_removal(result, success=True)
+                            self.processed_active[item_name] = "REMOVED"
+                        else:
+                            self.inventory_manager.print_removal(product_details, success=False)
+                            self.processed_active[item_name] = "NOT IN INV"
 
             # Reset latch once item has completely left the 30-frame window
-            elif item_name in self.logged_active and hits == 0:
-                self.logged_active.remove(item_name)
+            elif item_name in self.processed_active and hits == 0:
+                del self.processed_active[item_name]
 
-            status_map[item_name] = (hits, item_name in self.logged_active)
+            status_map[item_name] = (hits, self.processed_active.get(item_name))
 
         return status_map
+
+
+def build_left_of_line_mask(frame_shape, pt1, pt2):
+    """
+    Given two clicked points pt1=(x1, y1) and pt2=(x2, y2), builds a boolean mask
+    that is True for all pixels to the left of the line passing through pt1 and pt2,
+    along with the line's full-frame endpoints for drawing.
+    """
+    h, w = frame_shape[:2]
+    # Order points top-to-bottom so "left of the line" is always unambiguous
+    if pt1[1] <= pt2[1]:
+        (x_a, y_a), (x_b, y_b) = pt1, pt2
+    else:
+        (x_a, y_a), (x_b, y_b) = pt2, pt1
+
+    yy, xx = np.ogrid[:h, :w]
+    if y_b != y_a:
+        slope = (x_b - x_a) / float(y_b - y_a)
+        x_on_line = x_a + (yy - y_a) * slope
+        left_mask = xx <= x_on_line
+        line_start = (int(round(x_a + (0 - y_a) * slope)), 0)
+        line_end = (int(round(x_a + ((h - 1) - y_a) * slope)), h - 1)
+    else:
+        cutoff_x = max(x_a, x_b)
+        left_mask = xx <= cutoff_x
+        line_start = (cutoff_x, 0)
+        line_end = (cutoff_x, h - 1)
+
+    return left_mask, line_start, line_end
 
 
 # --- Testing the Pipeline ---
 if __name__ == "__main__":
     # Just type what you want to find in plain English
-    TARGET_CLASSES = ["green plastic snack packet", "white egg", "light green banana", "orange carrot", "red tomato", ""]
+    TARGET_CLASSES = ["white egg", "light green banana", "orange carrot", "red tomato", ""]
     
     shelf_life_db = load_items_shelf_life()
     inventory_manager = InventoryManager()
@@ -200,50 +260,130 @@ if __name__ == "__main__":
     )
 
     scanner = YOLOWorldScanner(TARGET_CLASSES)
-    cap = cv2.VideoCapture(1) # 0 for webcam, or use smartphone IP camera URL
+    cap = cv2.VideoCapture(0) # 0 for webcam, or use smartphone IP camera URL
+
+    WINDOW_NAME = "Zero-Shot Smart Fridge"
+    cv2.namedWindow(WINDOW_NAME)
+
+    line_points = []
+    left_mask = None
+    line_endpoints = None
+
+    def on_mouse(event, x, y, flags, param):
+        global line_points, left_mask, line_endpoints
+        if event == cv2.EVENT_LBUTTONDOWN and len(line_points) < 2:
+            line_points.append((x, y))
+            print(f"[Boundary] Point {len(line_points)} selected at ({x}, {y})", flush=True)
+
+    cv2.setMouseCallback(WINDOW_NAME, on_mouse)
 
     print(f"Loaded YOLO-World. Searching for: {TARGET_CLASSES}")
     print(f"Shelf-life catalog loaded: {list(shelf_life_db.keys())}")
+    print("Step 1: Click 2 points in the camera window to set the scan boundary line (left of line is scanned).")
+    print("Controls: 'i' = Insert mode | 'r' = Remove mode | 'c' = Re-pick boundary line | 'q' = Quit")
 
     try:
         while cap.isOpened():
             ret, frame = cap.read()
             if not ret: break
 
-            if not scanner.frame_queue.full():
-                scanner.frame_queue.put(frame.copy())
+            # Calibration phase: wait until user clicks 2 points to define the line
+            if len(line_points) < 2:
+                preview = frame.copy()
+                for pt in line_points:
+                    cv2.circle(preview, pt, 6, (0, 255, 255), -1)
+                cv2.putText(
+                    preview,
+                    f"Click 2 points for boundary line ({len(line_points)}/2)",
+                    (20, 35),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.75,
+                    (0, 255, 255),
+                    2,
+                )
+                cv2.imshow(WINDOW_NAME, preview)
+            else:
+                # Build mask once when the 2nd point is clicked
+                if left_mask is None:
+                    left_mask, l_start, l_end = build_left_of_line_mask(
+                        frame.shape, line_points[0], line_points[1]
+                    )
+                    line_endpoints = (l_start, l_end)
+                    print("[Boundary] Line calibrated! Scanning region to the left of the line.", flush=True)
 
-            if not scanner.result_queue.empty():
-                processed_frame, detections = scanner.result_queue.get()
-                status_map = tracker.update(detections)
-                
-                for det in detections:
-                    x1, y1, x2, y2 = det['box']
-                    raw_name = det['name']
-                    canonical_name = det.get('canonical_name')
+                if not scanner.frame_queue.full():
+                    # Mask out everything to the right of the line before sending for detection
+                    masked_frame = np.zeros_like(frame)
+                    masked_frame[left_mask] = frame[left_mask]
+                    scanner.frame_queue.put((frame.copy(), masked_frame, left_mask))
 
-                    if canonical_name and canonical_name in status_map:
-                        hits, is_logged = status_map[canonical_name]
-                        if is_logged:
-                            color = (0, 255, 0)  # Green once confirmed & logged
-                            label = f"{canonical_name} {det['conf']:.2f} [LOGGED]"
-                        else:
-                            color = (0, 215, 255)  # Amber while verifying (hits/20)
-                            label = f"{canonical_name} {det['conf']:.2f} [{hits}/{MIN_CONFIRM_FRAMES}]"
-                    else:
-                        color = (180, 180, 180)
-                        label = f"{raw_name} {det['conf']:.2f}"
+                if not scanner.result_queue.empty():
+                    processed_frame, detections = scanner.result_queue.get()
+                    status_map = tracker.update(detections)
+
+                    # Draw the boundary line
+                    if line_endpoints is not None:
+                        cv2.line(processed_frame, line_endpoints[0], line_endpoints[1], (255, 255, 0), 2)
                     
-                    # Draw bounding box
-                    cv2.rectangle(processed_frame, (x1, y1), (x2, y2), color, 2)
-                    # Draw label
-                    cv2.putText(processed_frame, label, 
-                                (x1, max(y1 - 10, 20)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
-                
-                cv2.imshow("Zero-Shot Smart Fridge", processed_frame)
+                    for det in detections:
+                        x1, y1, x2, y2 = det['box']
+                        raw_name = det['name']
+                        canonical_name = det.get('canonical_name')
 
-            if cv2.waitKey(1) & 0xFF == ord('q'):
+                        if canonical_name and canonical_name in status_map:
+                            hits, action_tag = status_map[canonical_name]
+                            if action_tag == "LOGGED":
+                                color = (0, 255, 0)      # Green once confirmed & logged
+                                label = f"{canonical_name} {det['conf']:.2f} [LOGGED]"
+                            elif action_tag == "REMOVED":
+                                color = (0, 0, 255)      # Red once confirmed & removed
+                                label = f"{canonical_name} {det['conf']:.2f} [REMOVED]"
+                            elif action_tag == "NOT IN INV":
+                                color = (0, 140, 255)    # Orange if not found in inventory
+                                label = f"{canonical_name} {det['conf']:.2f} [NOT IN INV]"
+                            else:
+                                color = (0, 215, 255)    # Amber while verifying (hits/20)
+                                label = f"{canonical_name} {det['conf']:.2f} [{hits}/{MIN_CONFIRM_FRAMES}]"
+                        else:
+                            color = (180, 180, 180)
+                            label = f"{raw_name} {det['conf']:.2f}"
+                        
+                        # Draw bounding box
+                        cv2.rectangle(processed_frame, (x1, y1), (x2, y2), color, 2)
+                        # Draw label
+                        cv2.putText(processed_frame, label, 
+                                    (x1, max(y1 - 10, 20)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+
+                    # Draw small 'I' or 'R' mode indicator at the top right
+                    h, w = processed_frame.shape[:2]
+                    mode_letter = "I" if tracker.mode == "INSERT" else "R"
+                    mode_color = (0, 255, 0) if tracker.mode == "INSERT" else (0, 0, 255)
+                    cv2.putText(
+                        processed_frame,
+                        mode_letter,
+                        (w - 35, 35),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.9,
+                        mode_color,
+                        2,
+                    )
+                    
+                    cv2.imshow(WINDOW_NAME, processed_frame)
+
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord('q'):
                 break
+            elif key in (ord('r'), ord('R')):
+                tracker.set_mode("REMOVE")
+            elif key in (ord('i'), ord('I')):
+                tracker.set_mode("INSERT")
+            elif key in (ord('c'), ord('C')):
+                line_points.clear()
+                left_mask = None
+                line_endpoints = None
+                tracker.windows.clear()
+                tracker.processed_active.clear()
+                print("[Boundary] Cleared boundary line. Click 2 points to re-calibrate.", flush=True)
     finally:
         scanner.stop()
         cap.release()
